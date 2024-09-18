@@ -1,44 +1,112 @@
-import glob
 import numpy as np
 import torch
+from tqdm import tqdm
+from utils import *
+import torch.nn.functional as F
 import os
-import cv2
-from model.unet_model import UNet
+import torch
+import torch.backends.cudnn as cudnn
+from tqdm import tqdm
+from utils.dataloader import *
+from utils.utils import *
+from model.unet_model import *
+import torch.distributed as dist
 
 if __name__ == "__main__":
-    # 选择设备，有cuda用cuda，没有就用cpu
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # 加载网络，图片单通道，分类为1。
-    net = UNet(n_channels=1, n_classes=1)
-    # 将网络拷贝到deivce中
-    net.to(device=device)
-    # 加载模型参数
-    net.load_state_dict(torch.load('best_model.pth', map_location=device))
-    # net.load_state_dict(torch.load('ISBI_model.pth', map_location=device))
-    # 测试模式
-    net.eval()
-    # 读取所有图片路径
-    tests_path = glob.glob('ISBI_data/test/*.png')
-    # 遍历素有图片
-    for test_path in tests_path:
-        # 保存结果地址
-        save_res_path = test_path.split('.')[0] + '_res.png'
-        # 读取图片
-        img = cv2.imread(test_path)
-        # 转为灰度图
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-        # 转为batch为1，通道为1，大小为512*512的数组
-        img = img.reshape(1, 1, img.shape[0], img.shape[1])
-        # 转为tensor
-        img_tensor = torch.from_numpy(img)
-        # 将tensor拷贝到device中，只用cpu就是拷贝到cpu中，用cuda就是拷贝到cuda中。
-        img_tensor = img_tensor.to(device=device, dtype=torch.float32)
-        # 预测
-        pred = net(img_tensor)
-        # 提取结果
-        pred = np.array(pred.data.cpu()[0])[0]
-        # 处理结果
-        pred[pred >= 0.5] = 255
-        pred[pred < 0.5] = 0
-        # 保存图片
-        cv2.imwrite(save_res_path, pred)
+    # 是否使用GPU
+    Cuda = True
+    num_workers = 4
+    distributed = False
+    num_classes = 2
+    predict_type = "Result" # ConfidenceInterval or Result
+    model_path = r""
+
+    input_shape = [512, 512]
+    output_folder = r""
+    data_dir = r""
+
+    
+    # 设置用到的显卡
+    ngpus_per_node  = torch.cuda.device_count()
+    if Cuda:
+        if distributed:
+            local_rank = int(os.environ["LOCAL_RANK"])
+            init_ddp(local_rank)
+            device = torch.device("cuda", local_rank)
+        else:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            local_rank = 0
+    else:
+        device = torch.device("cpu")
+        local_rank = 0
+
+    if local_rank == 0:
+        print("===============================================================================")
+
+    model = UNet(n_channels=3, n_classes=num_classes)      
+
+    if Cuda:
+        if distributed:
+            model = model.cuda(local_rank)
+            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True)
+        else:
+            model = torch.nn.DataParallel(model)
+            cudnn.benchmark = True
+            model = model.cuda()
+
+    if model_path != '':
+        if local_rank == 0:
+            print('Load weights {}.'.format(model_path))
+        model.load_state_dict(torch.load(model_path))  
+        
+    with open(os.path.join(data_dir, r"list/predict.txt"),"r") as f:
+        predict_lines = f.readlines()
+    num_predict = len(predict_lines)
+
+    if local_rank == 0:
+        print("device:", device, "num_predict:", num_predict)
+        print("===============================================================================")
+
+    image_transform = get_transform(input_shape, IsResize=False, IsTotensor=True, IsNormalize=True)
+
+    if local_rank == 0:
+        print("start predicting")
+
+    model.eval()      
+    for annotation_line in tqdm(predict_lines):
+        name_image = annotation_line.split()[0]
+
+        im_data, im_Geotrans, im_proj, cols, rows = read_tif(name_image)
+        image = Image.open(name_image)
+        name = os.path.basename(name_image)
+
+        if image_transform is not None:
+            image = image_transform(image)
+            
+        else:
+            image = torch.from_numpy(np.transpose(np.array(image), [2, 0 ,1]))
+
+        image = image.unsqueeze(0)
+        image = image.to(device).float()
+        prediction, out, embedding = model(image)
+        prediction = prediction.squeeze(0)
+        prediction = F.softmax(prediction, dim=0)
+
+        if predict_type == "Result":
+            prediction = torch.argmax(prediction, dim=0)
+        elif predict_type == "ConfidenceInterval":
+            prediction = prediction * 100
+            prediction = prediction.type(torch.uint8)
+        else:
+            raise ValueError("predict_type error!")
+
+        if local_rank == 0:
+            if not os.path.exists(os.path.join(output_folder, name)):
+                write_tif(os.path.join(output_folder, name), prediction.cpu().detach().numpy(), im_Geotrans, im_proj, gdal.GDT_Byte)
+
+    if distributed:
+        dist.barrier()
+
+    if local_rank == 0:
+        print("finish predicting successfully")
+        print("===============================================================================") 
