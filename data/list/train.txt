@@ -57,7 +57,6 @@ data\\label\\val_447.png
 data\\label\\val_444.png
 data\\label\\93.png
 data\\label\\43.png
-data\\label\\val_400.png
 data\\label\\val_453.png
 data\\label\\70.png
 data\\label\\10.png
