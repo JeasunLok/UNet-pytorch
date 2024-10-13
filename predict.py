@@ -5,78 +5,62 @@ from utils import *
 import torch.nn.functional as F
 import os
 import torch
-import torch.backends.cudnn as cudnn
 from tqdm import tqdm
 from utils.dataloader import *
 from utils.utils import *
 from model.unet_model import *
-import torch.distributed as dist
 
 if __name__ == "__main__":
     # 是否使用GPU
     Cuda = True
-    num_workers = 4
-    distributed = False
     num_classes = 2
     predict_type = "Result" # ConfidenceInterval or Result
-    model_path = r""
+    model_path = r"checkpoints/2024-10-13-17-32-25/model_state_dict_loss0.1429_epoch18.pth"
 
     input_shape = [512, 512]
-    output_folder = r""
-    data_dir = r""
+    output_folder = r"data/output"
+    data_dir = r"data"
 
-    
-    # 设置用到的显卡
-    ngpus_per_node  = torch.cuda.device_count()
     if Cuda:
-        if distributed:
-            local_rank = int(os.environ["LOCAL_RANK"])
-            init_ddp(local_rank)
-            device = torch.device("cuda", local_rank)
-        else:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            local_rank = 0
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
         device = torch.device("cpu")
-        local_rank = 0
 
-    if local_rank == 0:
-        print("===============================================================================")
+    print("===============================================================================")
 
-    model = UNet(n_channels=3, n_classes=num_classes)      
-
-    if Cuda:
-        if distributed:
-            model = model.cuda(local_rank)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True)
-        else:
-            model = torch.nn.DataParallel(model)
-            cudnn.benchmark = True
-            model = model.cuda()
+    model = UNet(n_channels=3, n_classes=num_classes).to(device)    
 
     if model_path != '':
-        if local_rank == 0:
-            print('Load weights {}.'.format(model_path))
-        model.load_state_dict(torch.load(model_path))  
+        print('Load weights {}.'.format(model_path))
+        # 加载权重
+        state_dict = torch.load(model_path)
+        
+        # 移除 'module.' 前缀
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k[7:] if k.startswith('module.') else k  # 去掉前缀
+            new_state_dict[new_key] = v
+        
+        # 加载修改后的权重
+        model.load_state_dict(new_state_dict)
         
     with open(os.path.join(data_dir, r"list/predict.txt"),"r") as f:
         predict_lines = f.readlines()
     num_predict = len(predict_lines)
 
-    if local_rank == 0:
-        print("device:", device, "num_predict:", num_predict)
-        print("===============================================================================")
+    print("device:", device, "num_predict:", num_predict)
+    print("===============================================================================")
 
-    image_transform = get_transform(input_shape, IsResize=False, IsTotensor=True, IsNormalize=True)
+    image_transform = get_transform(input_shape, IsResize=True, IsTotensor=True, IsNormalize=True)
 
-    if local_rank == 0:
-        print("start predicting")
+    print("start predicting")
 
     model.eval()      
     for annotation_line in tqdm(predict_lines):
         name_image = annotation_line.split()[0]
 
-        im_data, im_Geotrans, im_proj, cols, rows = read_tif(name_image)
+        if name_image.endswith(".tif"):
+            im_data, im_Geotrans, im_proj, cols, rows = read_tif(name_image)
         image = Image.open(name_image)
         name = os.path.basename(name_image)
 
@@ -87,8 +71,8 @@ if __name__ == "__main__":
             image = torch.from_numpy(np.transpose(np.array(image), [2, 0 ,1]))
 
         image = image.unsqueeze(0)
-        image = image.to(device).float()
-        prediction, out, embedding = model(image)
+        image = image.float().to(device)
+        prediction = model(image)
         prediction = prediction.squeeze(0)
         prediction = F.softmax(prediction, dim=0)
 
@@ -100,13 +84,28 @@ if __name__ == "__main__":
         else:
             raise ValueError("predict_type error!")
 
-        if local_rank == 0:
-            if not os.path.exists(os.path.join(output_folder, name)):
-                write_tif(os.path.join(output_folder, name), prediction.cpu().detach().numpy(), im_Geotrans, im_proj, gdal.GDT_Byte)
+        if not os.path.exists(os.path.join(output_folder, name)):
+            if name_image.endswith(".tif"):
+                write_tif(os.path.join(output_folder, name), prediction.cpu().detach().numpy(), im_Geotrans, im_proj)
+            else:
+                cv2.imwrite(os.path.join(output_folder, name), prediction.cpu().detach().numpy())
 
-    if distributed:
-        dist.barrier()
+                prediction_np = prediction.cpu().detach().numpy()
+                vis_output_path = os.path.join(output_folder, name.split(".")[0] + '_visualization.png')
+                prediction_min = prediction_np.min()
+                prediction_max = prediction_np.max()
 
-    if local_rank == 0:
-        print("finish predicting successfully")
-        print("===============================================================================") 
+                # 避免除以0的情况
+                if prediction_max != prediction_min:
+                    prediction_normalized = ((prediction_np - prediction_min) / (prediction_max - prediction_min)) * 255
+                else:
+                    prediction_normalized = prediction_np
+
+                prediction_normalized = prediction_normalized.astype('uint8')
+
+                    # 转换为uint8类型
+                prediction_normalized = prediction_normalized.astype('uint8')
+                cv2.imwrite(vis_output_path, prediction_normalized)
+
+    print("finish predicting successfully")
+    print("===============================================================================") 

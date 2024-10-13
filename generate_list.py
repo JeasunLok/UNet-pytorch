@@ -3,19 +3,20 @@ import random
 import cv2
 import numpy as np
 from tqdm import tqdm
-from utils import *
+from utils.utils import *
 
 train_percent = 0.7
 val_percent = 0.1
 test_percent = 0.2
 
-data_path = 'data'
+data_path = r'/mnt/ImarsData/ljs/project/pineapple_lacks_water'
+list_path = r'data'
 
 if __name__ == "__main__":
     random.seed(0)
     print("Generate txt for trainning, validating and testing in data folder.")
     segfilepath = os.path.join(data_path, "label")
-    saveBasePath = os.path.join(data_path, "list")
+    saveBasePath = os.path.join(list_path, "list")
     
     temp_seg = os.listdir(segfilepath)
     total_seg = []

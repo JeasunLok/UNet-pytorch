@@ -5,40 +5,35 @@ import os
 import torch 
 import torch.distributed as dist
 import random
-from osgeo import gdal
+import rasterio
 
 # 读取tif
 def read_tif(path):
-    dataset = gdal.Open(path)
-    cols = dataset.RasterXSize # 图像长度
-    rows = dataset.RasterYSize # 图像宽度
-    im_proj = (dataset.GetProjection()) # 读取投影
-    im_Geotrans = (dataset.GetGeoTransform()) # 读取仿射变换
-    im_data = dataset.ReadAsArray(0, 0, cols, rows) # 转为numpy格式
-    if len(im_data.shape)<3:
-        im_data = np.expand_dims(im_data, 0)
-    im_data = np.transpose(im_data, [1, 2, 0])
-    del dataset
-    return im_data, im_Geotrans, im_proj, cols, rows
+    with rasterio.open(path) as dataset:
+        im_data = dataset.read()  # 读取数据
+        if len(im_data) == 2:  # 处理单波段情况
+            im_data = im_data[np.newaxis, :, :]  # 添加波段维度
+        im_data = np.transpose(im_data, [1, 2, 0])  # 转置为 (height, width, channels)
+        im_proj = dataset.crs  # 读取投影
+        im_geotrans = dataset.transform  # 读取仿射变换
+        cols, rows = dataset.width, dataset.height
+    return im_data, im_geotrans, im_proj, cols, rows
+
 
 # 写出tif
-def write_tif(newpath, im_data, im_geotrans, im_proj, datatype):
-    # datatype常用gdal.GDT_UInt16 gdal.GDT_Int16 gdal.GDT_Float32
-    if len(im_data.shape)==3:
-        im_bands, im_height, im_width = im_data.shape
-    else:
-        im_bands, (im_height, im_width) = 1, im_data.shape
-    driver = gdal.GetDriverByName('GTiff')
-    new_dataset = driver.Create(newpath, im_width, im_height, im_bands, datatype)
-    new_dataset.SetGeoTransform(im_geotrans)
-    new_dataset.SetProjection(im_proj)
+def write_tif(newpath, im_data, im_geotrans, im_proj):
+    if len(im_data) == 2:  # 处理二维数据的情况
+        im_data = im_data[np.newaxis, :, :]  # 添加一个波段维度
+    bands = im_data.shape[0]
+    height = im_data.shape[1]
+    width = im_data.shape[2]
+    datatype = im_data.dtype  # 获取数据类型
 
-    if im_bands == 1:
-        new_dataset.GetRasterBand(1).WriteArray(np.squeeze(im_data, axis=0))
-    else:
-        for i in range(im_bands):
-            new_dataset.GetRasterBand(i+1).WriteArray(im_data[i])
-    del new_dataset
+    with rasterio.open(newpath, 'w', driver='GTiff', height=height, 
+                       width=width, count=bands, 
+                       dtype=datatype, crs=im_proj, transform=im_geotrans) as new_dataset:
+        for i in range(bands):
+            new_dataset.write(im_data[i, :, :], i + 1)
 
 def init_ddp(local_rank):
     '''
@@ -165,7 +160,7 @@ def get_transform(size=[200, 200], mean=[0, 0, 0], std=[1, 1, 1], IsResize=False
 
 def compute_mIoU(CM, ignore_index=None):
     np.seterr(divide="ignore", invalid="ignore")
-    if ignore_index is not None:
+    if ignore_index >= 0:
       CM = np.delete(CM, ignore_index, axis=0)
       CM = np.delete(CM, ignore_index, axis=1)
     intersection = np.diag(CM)
@@ -178,7 +173,7 @@ def compute_mIoU(CM, ignore_index=None):
 
 def compute_acc(CM, ignore_index=None):
     np.seterr(divide="ignore", invalid="ignore")
-    if ignore_index is not None:
+    if ignore_index >= 0:
       CM = np.delete(CM, ignore_index, axis=0)
       CM = np.delete(CM, ignore_index, axis=1)
     TP = np.sum(np.diag(CM))
@@ -188,7 +183,7 @@ def compute_acc(CM, ignore_index=None):
 
 def compute_metrics(CM, ignore_index=None):
     np.seterr(divide="ignore", invalid="ignore")
-    if ignore_index is not None:
+    if ignore_index >= 0:
       CM = np.delete(CM, ignore_index, axis=0)
       CM = np.delete(CM, ignore_index, axis=1)
     num_classes = CM.shape[0]

@@ -25,6 +25,9 @@ class MyDataset(Dataset):
         image = Image.open(name_image)
         label = Image.open(name_label)
 
+        if label.mode != 'L':
+            label = label.convert('L')
+
         if self.image_transform is not None:
             image = self.image_transform(image)
         else:
@@ -32,6 +35,7 @@ class MyDataset(Dataset):
         if self.label_transform is not None:
             label = self.label_transform(label)
         label= torch.from_numpy(np.array(label))
+        
         return image, label
 
     def __len__(self):
