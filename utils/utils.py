@@ -158,7 +158,7 @@ def get_transform(size=[200, 200], mean=[0, 0, 0], std=[1, 1, 1], IsResize=False
   )
   return diy_transform
 
-def compute_mIoU(CM, ignore_index=None):
+def compute_mIoU(CM, ignore_index=-1):
     np.seterr(divide="ignore", invalid="ignore")
     if ignore_index >= 0:
       CM = np.delete(CM, ignore_index, axis=0)
@@ -171,7 +171,7 @@ def compute_mIoU(CM, ignore_index=None):
     mIoU = np.mean(IoU)
     return mIoU
 
-def compute_acc(CM, ignore_index=None):
+def compute_acc(CM, ignore_index=-1):
     np.seterr(divide="ignore", invalid="ignore")
     if ignore_index >= 0:
       CM = np.delete(CM, ignore_index, axis=0)
@@ -181,7 +181,7 @@ def compute_acc(CM, ignore_index=None):
     acc = TP/Sum
     return acc
 
-def compute_metrics(CM, ignore_index=None):
+def compute_metrics(CM, ignore_index=-1):
     np.seterr(divide="ignore", invalid="ignore")
     if ignore_index >= 0:
       CM = np.delete(CM, ignore_index, axis=0)
