@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 from tqdm import tqdm
-import cv2
 import os
 import torch.nn.functional as F
 from utils.dataloader import *
@@ -69,7 +68,8 @@ if __name__ == "__main__":
 
     input_shape = [512, 512]
     output_folder = r"data/output"
-    data_dir = r"/mnt/ImarsData/ljs/project/pineapple_lacks_water/predict_whole/DJI_202409231052_010_2024-09-17-109D"  # 图片所在的文件夹路径
+    data_dir = r"/mnt/ImarsData/ljs/project/pineapple_lacks_water/predict_whole/173D/F-3/DJI_202409230912_007_2024-09-17-173D"  
+    # 图片所在的文件夹路径
     output_folder_name = os.path.basename(data_dir)
     output_folder = os.path.join(output_folder, output_folder_name)
     os.makedirs(output_folder, exist_ok=True)
