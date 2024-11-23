@@ -1,0 +1,9 @@
+matplotlib==3.8.0
+numpy==2.1.3
+opencv_python==4.8.0.76
+Pillow==10.0.1
+rasterio==1.3.10
+scikit_learn==1.3.2
+torch==2.1.0
+torchvision==0.16.0
+tqdm==4.66.1
