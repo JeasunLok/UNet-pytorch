@@ -19,7 +19,7 @@ pip install -r requirements.txt
 ```
 If you want to use GPU, please check your CUDA version and download the proper version of [pytorch](https://pytorch.org/get-started/locally/). Use CUDA 12.1 as example:
 ```
-nvidia-smi
+nvcc --version
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 ***
